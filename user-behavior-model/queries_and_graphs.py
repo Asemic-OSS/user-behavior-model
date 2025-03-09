@@ -278,12 +278,15 @@ all_data AS (
 )
 select
     cohort_day,
+    sum(dau) as dau,
+    sum(mDAU) as mDAU,
     sum(dau) / sum(cohort_size) * 100 as retention,
     sum(mDAU) / sum(payers) * 100 as payer_retention,
     sum(payers) / sum(cohort_size) * 100 as cohort_conversion,
     sum(daily_payers) / sum(dau) * 100 as daily_purchase_rate,
 
     sum(total_flagged) as total_flagged,
+    sum(fDAU) as fDAU,
     sum(fDAU) / sum(total_flagged) * 100 as flagged_retention,
     sum(total_flagged) / sum(cohort_size) * 100 as cohort_conversion_flagged,
     sum(daily_flagged) / sum(dau) * 100 as daily_flagged_rate
@@ -403,6 +406,51 @@ def show_daily_purchase(df, metric_list=['daily_purchase_rate', 'daily_flagged_r
     )
     return fig
 
+def show_mdau_over_dau(df):
+    # Create the Plotly figure
+    fig = go.Figure()
+
+    stable_df = df[(df['cohort_day'] > 60) & (df['cohort_day'] < 180)]
+    lim = mean(stable_df['fDAU'] / stable_df['dau'])
+
+    # Add mDAU / DAU
+    fig.add_trace(go.Scatter(
+        x=df['cohort_day'], 
+        y=df['mDAU'] / df['dau'],
+        mode='lines',
+        name='mDAU / DAU',
+        line=dict(color='red', width=2),
+        marker=dict(size=8, symbol='circle')
+    ))
+    # Add fDAU / DAU
+    fig.add_trace(go.Scatter(
+        x=df['cohort_day'], 
+        y=df['fDAU'] / df['dau'],
+        mode='lines',
+        name='fDAU / DAU',
+        line=dict(color='orange', width=2),
+        marker=dict(size=8, symbol='circle')
+    ))
+    fig.add_hline(lim)
+
+    # Customize the layout
+    fig.update_layout(
+        title='mDAU / DAU',
+        xaxis_title='Days Since Cohort Start',
+        yaxis_title='mDAU / DAU (%)',
+        xaxis=dict(range=[0,180]),
+        template='plotly_white',
+        width=600,
+        height=400,
+        legend=dict(
+            yanchor="bottom",
+            y=0.01,
+            xanchor="right",
+            x=0.99
+        )
+    )
+    return fig
+
 def show_error(df, metric1, metric2):
     # Create the Plotly figure
     fig = go.Figure()
@@ -444,5 +492,8 @@ def show_error(df, metric1, metric2):
 def _pretty_name(s):
     s = " ".join([x.capitalize() for x in s.split("_")])
     return s
+
+def mean(lst):
+    return sum(lst) / len(lst)
 
 
