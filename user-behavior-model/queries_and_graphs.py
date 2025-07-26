@@ -152,7 +152,8 @@ WITH
 -- add propensity scores to each row of data
 full_dataset AS (
     select
-        *
+        *,
+        MIN(if(new_payers = 1, date_id, null)) over (partition by user_id order bu date_id) as first_transaction_day
     from dataset
         inner join propensity using(user_id)
 ),
@@ -290,6 +291,90 @@ select
     sum(fDAU) / sum(total_flagged) * 100 as flagged_retention,
     sum(total_flagged) / sum(cohort_size) * 100 as cohort_conversion_flagged,
     sum(daily_flagged) / sum(dau) * 100 as daily_flagged_rate
+from all_data
+group by cohort_day
+order by cohort_day
+"""
+
+payment_retention_query = """
+-- Flag specific users
+WITH 
+-- add propensity scores to each row of data
+full_dataset AS (
+    select
+        *,
+        MIN(if(new_payers = 1, day, null)) over (partition by user_id order by day) as first_transaction_day
+    from dataset
+),
+
+-- This many spends every cohort day
+daily_purchase_rate AS (
+    select
+        registration_day,
+        cohort_day,
+        sum(daily_payers) / count(*) as daily_purchase_rate
+    from dataset
+    group by registration_day, cohort_day
+),
+
+-- cohorts are complete only on cohort day 0, calculate it separately
+cohort_size AS (
+    select
+        registration_day,
+        count(*) as cohort_size
+    from dataset
+    where cohort_day = 0
+    group by registration_day
+),
+-- payers are another special case for calculating for each day
+payers AS (
+    WITH new_payers AS (
+        select
+            registration_day,
+            cohort_day,
+            sum(new_payers) as new_payers
+        from dataset
+        group by registration_day, cohort_day
+    )
+    select
+        registration_day,
+        cohort_day,
+        sum(new_payers) over (partition by registration_day order by cohort_day) as payers
+    from new_payers
+),
+-- 
+daily_active AS (
+    select
+        registration_day,
+        cohort_day,
+        count(*) as dau,
+        sum(daily_payers) as daily_payers,
+        sum(payer) as mDAU,
+    from full_dataset
+    group by registration_day, cohort_day
+),
+
+all_data AS (
+    select
+        registration_day,
+        cohort_day,
+        dau,
+        mDAU,
+        daily_payers,
+        cohort_size,
+        payers
+    from daily_active
+        inner join payers using (registration_day, cohort_day)
+        inner join cohort_size using (registration_day)
+)
+select
+    cohort_day,
+    sum(dau) as dau,
+    sum(mDAU) as mDAU,
+    sum(dau) / sum(cohort_size) * 100 as retention,
+    sum(mDAU) / sum(payers) * 100 as payer_retention,
+    sum(payers) / sum(cohort_size) * 100 as cohort_conversion,
+    sum(daily_payers) / sum(dau) * 100 as daily_purchase_rate
 from all_data
 group by cohort_day
 order by cohort_day
@@ -488,6 +573,40 @@ def show_error(df, metric1, metric2):
         )
     )
     return fig
+
+def show_metric(df, x = 'date_id', metric_list=['retention', 'payer_retention',]):
+    # Create the Plotly figure
+    fig = go.Figure()
+
+    color = {0: 'blue', 1: 'red', 2: 'orange'}
+
+    for i, metric in enumerate(metric_list):
+        # Add Overall Retention trace
+        fig.add_trace(go.Scatter(
+            x=df[x], 
+            y=df[metric],
+            mode='lines',
+            name=_pretty_name(metric),
+            line=dict(color=color[i], width=2),
+            marker=dict(size=8, symbol='circle')
+        ))
+
+    # Customize the layout
+    fig.update_layout(
+        title=_pretty_name(metric_list[0]),
+        xaxis_title=_pretty_name(x),
+        template='plotly_white',
+        width=600,
+        height=400,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="right",
+            x=0.99
+        )
+    )
+    return fig
+
 
 def _pretty_name(s):
     s = " ".join([x.capitalize() for x in s.split("_")])
